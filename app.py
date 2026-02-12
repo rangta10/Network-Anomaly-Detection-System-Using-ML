@@ -4,7 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.metrics import accuracy_score, confusion_matrix
 import streamlit_authenticator as stauth
 
@@ -72,9 +72,34 @@ if train_file and test_file:
     train_data = pd.read_csv(train_file)
     test_data = pd.read_csv(test_file)
 
+    train_data.columns = train_data.columns.str.strip()
+    test_data.columns = test_data.columns.str.strip()
+
+    # ---------------------------------------------------------
+    # AUTO DATASET DETECTION
+    # ---------------------------------------------------------
+    if "class" in train_data.columns:
+        dataset_type = "NSL"
+        target_column = "class"
+    elif "Label" in train_data.columns:
+        dataset_type = "CIC"
+        target_column = "Label"
+        train_data[target_column] = train_data[target_column].apply(
+            lambda x: "normal" if x == "BENIGN" else "attack"
+        )
+        test_data[target_column] = test_data[target_column].apply(
+            lambda x: "normal" if x == "BENIGN" else "attack"
+        )
+    else:
+        st.error("Unsupported dataset format.")
+        st.stop()
+
+    # ---------------------------------------------------------
+    # FEATURE PROCESSING
+    # ---------------------------------------------------------
     categorical_cols = train_data.select_dtypes(include=['object']).columns.tolist()
-    if 'class' in categorical_cols:
-        categorical_cols.remove('class')
+    if target_column in categorical_cols:
+        categorical_cols.remove(target_column)
 
     encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
 
@@ -90,12 +115,21 @@ if train_file and test_file:
         axis=1
     )
 
-    X_train = train_encoded.drop("class", axis=1)
-    y_train = train_encoded["class"]
+    X_train = train_encoded.drop(target_column, axis=1)
+    y_train = train_encoded[target_column]
+
+    # Ensure numeric consistency (important for CIC)
+    X_train = X_train.replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
 
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
 
+    # ---------------------------------------------------------
+    # TEST PROCESSING
+    # ---------------------------------------------------------
     encoded_test = encoder.transform(test_data[categorical_cols])
     encoded_test_df = pd.DataFrame(
         encoded_test,
@@ -108,12 +142,15 @@ if train_file and test_file:
         axis=1
     )
 
-    if "class" in test_data.columns:
-        y_test = test_data["class"]
-        X_test = test_encoded.drop("class", axis=1)
+    if target_column in test_data.columns:
+        y_test = test_encoded[target_column]
+        X_test = test_encoded.drop(target_column, axis=1)
     else:
         y_test = None
         X_test = test_encoded
+
+    X_test = X_test.replace([np.inf, -np.inf], np.nan).fillna(0)
+    X_test = scaler.transform(X_test)
 
     predictions = model.predict(X_test)
     probabilities = model.predict_proba(X_test)
@@ -325,3 +362,4 @@ if train_file and test_file:
         file_name="security_analysis_report.csv",
         mime="text/csv"
     )
+
