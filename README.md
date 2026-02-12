@@ -7,7 +7,6 @@ This project presents an experimental evaluation of a Machine Learning-based Net
 The system detects abnormal network traffic patterns and classifies potential intrusions using both unsupervised and supervised machine learning techniques.
 
 ---
----
 
 # Web-Based Security Dashboard Interface
 
