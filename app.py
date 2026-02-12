@@ -1,193 +1,327 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
+import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.metrics import confusion_matrix, accuracy_score
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import accuracy_score, confusion_matrix
+import streamlit_authenticator as stauth
 
-st.set_page_config(page_title="Network Security Dashboard", layout="wide")
+# ---------------------------------------------------------
+# PAGE CONFIG
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="Network Security Intelligence Dashboard",
+    layout="wide"
+)
+
+# ---------------------------------------------------------
+# AUTHENTICATION
+# ---------------------------------------------------------
+credentials = {
+    "usernames": {
+        "admin": {
+            "name": "Administrator",
+            "password": "$2b$12$mMtILkxbK.LeO1KGPs/n2O6K/CyaOZLDHVEShbQYbUsWB.NXA6rqa"
+        }
+    }
+}
+
+authenticator = stauth.Authenticate(
+    credentials,
+    "secure_cookie",
+    "secure_key",
+    1
+)
+
+authenticator.login(location="main")
+auth_status = st.session_state.get("authentication_status")
+
+if auth_status is None:
+    st.warning("Please login to continue.")
+    st.stop()
+
+if auth_status is False:
+    st.error("Invalid login credentials.")
+    st.stop()
+
+authenticator.logout(location="sidebar")
+st.sidebar.success(f"Welcome {st.session_state.get('name')}")
+
+# ---------------------------------------------------------
+# SIDEBAR
+# ---------------------------------------------------------
+st.sidebar.header("Settings")
+
+mode = st.sidebar.radio(
+    "Select Mode",
+    ["Beginner Mode", "Advanced Mode"]
+)
+
+train_file = st.sidebar.file_uploader("Upload Training Dataset (CSV)", type=["csv"])
+test_file = st.sidebar.file_uploader("Upload Testing Dataset (CSV)", type=["csv"])
 
 st.title("Network Security Intelligence Dashboard")
 
-# Load models safely
-nsl_model = None
-cic_model = None
-scaler_cic = None
+# ---------------------------------------------------------
+# MAIN LOGIC
+# ---------------------------------------------------------
+if train_file and test_file:
 
-try:
-    nsl_model = joblib.load("anomaly_model.pkl")
-except Exception:
-    nsl_model = None
+    train_data = pd.read_csv(train_file)
+    test_data = pd.read_csv(test_file)
 
-try:
-    cic_model = joblib.load("models/cic_model.pkl")
-    scaler_cic = joblib.load("models/scaler_cic.pkl")
-except Exception:
-    cic_model = None
-    scaler_cic = None
+    categorical_cols = train_data.select_dtypes(include=['object']).columns.tolist()
+    if 'class' in categorical_cols:
+        categorical_cols.remove('class')
 
-mode = st.sidebar.selectbox("Select Mode", ["Beginner", "Advanced"])
+    encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
 
-uploaded_test = st.file_uploader("Upload Test Dataset (CSV)", type=["csv"])
+    encoded_train = encoder.fit_transform(train_data[categorical_cols])
+    encoded_train_df = pd.DataFrame(
+        encoded_train,
+        columns=encoder.get_feature_names_out(categorical_cols)
+    )
 
-if uploaded_test is not None:
+    train_encoded = pd.concat(
+        [train_data.drop(columns=categorical_cols).reset_index(drop=True),
+         encoded_train_df.reset_index(drop=True)],
+        axis=1
+    )
 
-    test_data = pd.read_csv(uploaded_test)
-    test_data.columns = test_data.columns.str.strip()
+    X_train = train_encoded.drop("class", axis=1)
+    y_train = train_encoded["class"]
 
-    st.success("Dataset loaded successfully.")
-    st.write("Rows:", len(test_data))
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
 
-    # Detect dataset type
-    if "protocol_type" in test_data.columns:
-        dataset_type = "NSL"
-    elif "Flow Duration" in test_data.columns:
-        dataset_type = "CIC"
+    encoded_test = encoder.transform(test_data[categorical_cols])
+    encoded_test_df = pd.DataFrame(
+        encoded_test,
+        columns=encoder.get_feature_names_out(categorical_cols)
+    )
+
+    test_encoded = pd.concat(
+        [test_data.drop(columns=categorical_cols).reset_index(drop=True),
+         encoded_test_df.reset_index(drop=True)],
+        axis=1
+    )
+
+    if "class" in test_data.columns:
+        y_test = test_data["class"]
+        X_test = test_encoded.drop("class", axis=1)
     else:
-        st.error("Unsupported dataset format.")
-        st.stop()
+        y_test = None
+        X_test = test_encoded
 
-    st.info(f"Detected Dataset Type: {dataset_type}")
+    predictions = model.predict(X_test)
+    probabilities = model.predict_proba(X_test)
 
-    # ============================
-    # NSL DATASET PROCESSING
-    # ============================
-    if dataset_type == "NSL":
+    test_data["Predicted_Class"] = predictions
+    test_data["Confidence"] = probabilities.max(axis=1)
 
-        if nsl_model is None:
-            st.error("NSL model file not found.")
-            st.stop()
+    total = len(test_data)
+    threats = (test_data["Predicted_Class"] != "normal").sum()
+    threat_percent = (threats / total) * 100
+    safety_score = 100 - threat_percent
+    avg_confidence = test_data["Confidence"].mean()
 
-        if "label" in test_data.columns:
-            X = test_data.drop("label", axis=1)
-        else:
-            X = test_data.copy()
-
-        predictions = nsl_model.predict(X)
-
-    # ============================
-    # CIC DATASET PROCESSING
-    # ============================
-    elif dataset_type == "CIC":
-
-        if cic_model is None or scaler_cic is None:
-            st.error("CIC model or scaler file not found.")
-            st.stop()
-
-        if "Label" in test_data.columns:
-            y_true = test_data["Label"]
-            y_true = y_true.apply(lambda x: 0 if x == "BENIGN" else 1)
-            X = test_data.drop("Label", axis=1)
-        else:
-            y_true = None
-            X = test_data.copy()
-
-        X = X.select_dtypes(include=["int64", "float64"])
-        X = X.replace([np.inf, -np.inf], np.nan)
-        X = X.fillna(0)
-
-        X_scaled = scaler_cic.transform(X)
-        predictions = cic_model.predict(X_scaled)
-
-    else:
-        st.stop()
-
-    # Ensure predictions are numeric 0/1
-    predictions = np.array(predictions).astype(int)
-
-    test_data["Prediction"] = predictions
-
-    total = len(predictions)
-    anomalies = int(np.sum(predictions))
-    normal = total - anomalies
-    anomaly_percent = (anomalies / total) * 100 if total > 0 else 0
-
-    # ============================
+    # =====================================================
     # BEGINNER MODE
-    # ============================
-    if mode == "Beginner":
+    # =====================================================
+    if mode == "Beginner Mode":
 
-        st.subheader("Security Status Overview")
+        st.header("Network Safety Overview")
 
-        if anomaly_percent < 5:
-            status = "SAFE"
-            color = "green"
-        elif anomaly_percent < 20:
-            status = "LOW RISK"
-            color = "orange"
+        if threat_percent == 0:
+            st.success("System Status: SAFE")
+            explanation = "No suspicious activity detected."
+        elif threat_percent < 5:
+            st.warning("System Status: LOW RISK")
+            explanation = "Minor unusual activity detected."
+        elif threat_percent < 20:
+            st.error("System Status: MEDIUM RISK")
+            explanation = "Suspicious activity detected. Review recommended."
         else:
-            status = "HIGH RISK"
-            color = "red"
+            st.error("System Status: HIGH RISK")
+            explanation = "Significant malicious patterns detected."
 
-        st.markdown(f"### System Status: :{color}[{status}]")
-        st.write(f"Anomaly Percentage: {anomaly_percent:.2f}%")
+        st.info(explanation)
 
-        safety_score = 100 - anomaly_percent
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Records Checked", total)
+        col2.metric("Suspicious Records", threats)
+        col3.metric("Threat Percentage", f"{threat_percent:.2f}%")
 
-        fig = go.Figure(go.Indicator(
+        # Gauge
+        gauge = go.Figure(go.Indicator(
             mode="gauge+number",
             value=safety_score,
             title={'text': "Network Safety Score"},
             gauge={
                 'axis': {'range': [0, 100]},
                 'steps': [
-                    {'range': [0, 50], 'color': "red"},
-                    {'range': [50, 80], 'color': "yellow"},
-                    {'range': [80, 100], 'color': "green"},
+                    {'range': [0, 30], 'color': "red"},
+                    {'range': [30, 60], 'color': "orange"},
+                    {'range': [60, 85], 'color': "yellow"},
+                    {'range': [85, 100], 'color': "green"},
                 ],
             }
         ))
+        st.plotly_chart(gauge, use_container_width=True)
 
-        st.plotly_chart(fig, use_container_width=True)
+        
+        
+        # ---- INSIGHT SECTION (fills the gap) ----
+        st.markdown("---")
+        st.subheader("Security Insight Summary")
 
-        pie = go.Figure(data=[go.Pie(
+        colA, colB, colC = st.columns(3)
+        colA.metric("Average Detection Confidence", f"{avg_confidence:.2f}")
+        colB.metric("Normal Traffic Records", total - threats)
+        colC.metric("Suspicious Traffic Records", threats)
+
+        severity = go.Figure(go.Indicator(
+            mode="number+gauge",
+            value=threat_percent,
+            title={'text': "Threat Level %"},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'bar': {'color': "darkred"},
+                'steps': [
+                    {'range': [0, 5], 'color': "green"},
+                    {'range': [5, 20], 'color': "yellow"},
+                    {'range': [20, 50], 'color': "orange"},
+                    {'range': [50, 100], 'color': "red"},
+                ],
+            }
+        ))
+        st.plotly_chart(severity, use_container_width=True)  
+        
+        # ---- IMPROVED DONUT CHART ----
+        st.subheader("Traffic Distribution Overview")
+
+        normal_count = total - threats
+
+        fig_pie = go.Figure(data=[go.Pie(
             labels=["Normal Traffic", "Suspicious Traffic"],
-            values=[normal, anomalies],
-            hole=0.5
+            values=[normal_count, threats],
+            hole=0.55,
+            marker=dict(
+                colors=["#2ECC71", "#E74C3C"],
+                line=dict(color="#111111", width=2)
+            ),
+            pull=[0, 0.08],
+            textinfo="percent+label",
+            textfont=dict(size=14),
+            hovertemplate="<b>%{label}</b><br>" +
+                          "Count: %{value}<br>" +
+                          "Percentage: %{percent}<extra></extra>"
         )])
 
-        st.plotly_chart(pie, use_container_width=True)
+        fig_pie.update_layout(
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.2,
+                xanchor="center",
+                x=0.5
+            ),
+            margin=dict(t=40, b=40, l=0, r=0),
+            annotations=[
+                dict(
+                    text=f"Total<br>{total}",
+                    x=0.5, y=0.5,
+                    font_size=18,
+                    showarrow=False
+                )
+            ]
+        )
 
-    # ============================
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+        st.subheader("Recommended Action")
+
+        if threat_percent == 0:
+            st.write("No action required. Continue periodic monitoring.")
+        elif threat_percent < 5:
+            st.write("Monitor network behavior and re-check logs.")
+        elif threat_percent < 20:
+            st.write("Investigate abnormal IPs and firewall alerts.")
+        else:
+            st.write("Immediate security review required.")
+
+    # =====================================================
     # ADVANCED MODE
-    # ============================
-    if mode == "Advanced":
+    # =====================================================
+    if mode == "Advanced Mode":
 
-        st.subheader("Detailed Analysis")
+        st.header("Advanced Threat Analytics")
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Records", total)
+        col2.metric("Threats Detected", threats)
+        col3.metric("Threat %", f"{threat_percent:.2f}%")
 
-        with col1:
-            st.metric("Total Records", total)
-            st.metric("Anomalies Detected", anomalies)
+        # Feature Importance
+        st.subheader("Top Influential Features")
+        importances = model.feature_importances_
+        feature_names = X_train.columns
 
-        with col2:
-            st.metric("Normal Traffic", normal)
-            st.metric("Anomaly Percentage", f"{anomaly_percent:.2f}%")
+        feat_df = pd.DataFrame({
+            "Feature": feature_names,
+            "Importance": importances
+        }).sort_values(by="Importance", ascending=False).head(15)
 
-        if dataset_type == "CIC" and "y_true" in locals() and y_true is not None:
-            acc = accuracy_score(y_true, predictions)
-            st.write("Model Accuracy:", round(acc, 4))
+        fig_feat = px.bar(
+            feat_df,
+            x="Importance",
+            y="Feature",
+            orientation='h'
+        )
+        st.plotly_chart(fig_feat, use_container_width=True)
 
-            cm = confusion_matrix(y_true, predictions)
+        # Confusion Matrix
+        if y_test is not None:
+            st.subheader("Confusion Matrix")
+            cm = confusion_matrix(y_test, predictions)
+            fig_cm = px.imshow(cm, text_auto=True)
+            st.plotly_chart(fig_cm, use_container_width=True)
 
-            cm_fig = go.Figure(data=go.Heatmap(
-                z=cm,
-                x=["Normal", "Attack"],
-                y=["Normal", "Attack"],
-                colorscale="Blues"
-            ))
+            accuracy = accuracy_score(y_test, predictions)
+            st.metric("Model Accuracy", f"{accuracy*100:.2f}%")
 
-            st.plotly_chart(cm_fig, use_container_width=True)
+        # Confidence Histogram
+        st.subheader("Prediction Confidence Distribution")
+        hist = px.histogram(test_data, x="Confidence", nbins=30)
+        st.plotly_chart(hist, use_container_width=True)
 
-        st.subheader("Dataset Preview")
+        # Filter by Attack Type
+        st.subheader("Filter by Predicted Attack Type")
+        attack_types = test_data["Predicted_Class"].unique()
+        selected_attack = st.selectbox("Select Attack Type", attack_types)
+        filtered = test_data[test_data["Predicted_Class"] == selected_attack]
+        st.dataframe(filtered.head(50))
+
+        # High Risk Records
+        st.subheader("Top High-Risk Records")
+        high_risk = test_data.sort_values(by="Confidence", ascending=False).head(10)
+        st.dataframe(high_risk)
+
+        # Dataset Explorer
+        st.subheader("Dataset Explorer")
         st.dataframe(test_data.head(100))
 
-        csv = test_data.to_csv(index=False).encode("utf-8")
+    # -----------------------------------------------------
+    # DOWNLOAD
+    # -----------------------------------------------------
+    csv = test_data.to_csv(index=False).encode('utf-8')
 
-        st.download_button(
-            label="Download Analysis Report",
-            data=csv,
-            file_name="security_report.csv",
-            mime="text/csv",
-        )
+    st.download_button(
+        label="Download Security Report",
+        data=csv,
+        file_name="security_analysis_report.csv",
+        mime="text/csv"
+    )
