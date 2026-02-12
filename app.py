@@ -8,9 +8,6 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import accuracy_score, confusion_matrix
 import streamlit_authenticator as stauth
 
-# ---------------------------------------------------------
-# PAGE CONFIG
-# ---------------------------------------------------------
 st.set_page_config(
     page_title="Network Security Intelligence Dashboard",
     layout="wide"
@@ -325,3 +322,4 @@ if train_file and test_file:
         file_name="security_analysis_report.csv",
         mime="text/csv"
     )
+
