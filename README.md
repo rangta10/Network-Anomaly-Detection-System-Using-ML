@@ -7,6 +7,110 @@ This project presents an experimental evaluation of a Machine Learning-based Net
 The system detects abnormal network traffic patterns and classifies potential intrusions using both unsupervised and supervised machine learning techniques.
 
 ---
+---
+
+# Web-Based Security Dashboard Interface
+
+This project includes a fully interactive web-based Network Security Dashboard built using Streamlit.
+
+The dashboard transforms the anomaly detection system into a user-friendly application suitable for both technical and non-technical users.
+
+---
+
+## Dashboard Features
+
+The interface allows users to:
+
+- Upload training and testing datasets using drag-and-drop
+- Perform real-time anomaly detection
+- View Network Safety Score using an interactive gauge meter
+- Analyze traffic distribution using a modern donut chart
+- See clear SAFE / LOW RISK / HIGH RISK status indicators
+- View confusion matrix and model accuracy (Advanced Mode)
+- Analyze feature importance visualization
+- Filter traffic by predicted attack type
+- Identify high-risk records
+- Explore dataset in tabular format
+- Download full security analysis report (CSV)
+- Secure access via login authentication
+- Switch between Beginner Mode and Advanced Mode
+
+---
+
+## Interface Modes
+
+### Beginner Mode
+
+Designed for non-technical users, students, and executives.
+
+Provides:
+
+- Clear system safety status
+- Visual Safety Score gauge
+- Traffic distribution donut chart
+- Simple explanation of results
+- Recommended actions
+- Easy-to-understand metrics
+
+This mode avoids complex machine learning terminology.
+
+---
+
+### Advanced Mode
+
+Designed for researchers, cybersecurity analysts, and professionals.
+
+Provides:
+
+- Feature importance visualization
+- Confusion matrix
+- Model accuracy score
+- Threat confidence histogram
+- Attack type filtering
+- High-risk record detection
+- Dataset explorer
+- Detailed analytics breakdown
+
+---
+
+## How to Run the Web Dashboard
+
+### 1. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+##2. Run the Application
+```bash
+ streamlit run app.py
+```
+
+After running the command, open the local URL shown in the terminal (usually: http://localhost:8501
+).
+
+##Default Login Credentials
+
+Username:
+```
+admin
+```
+Password:
+```
+admin123
+```
+
+You can modify credentials inside the app.py file.
+
+#Technologies Used in Interface
+
+-Streamlit
+-Plotly
+-Scikit-Learn
+-Pandas
+-NumPy
+-Streamlit-Authenticator
+
+This interface transforms the anomaly detection model into a professional-grade, interactive security intelligence dashboard suitable for academic, research, and demonstration purposes.
 
 ## Datasets Used
 
